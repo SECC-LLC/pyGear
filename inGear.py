@@ -112,6 +112,14 @@ if __name__ == '__main__':
     #####################################################################################################################
     # threaded LOGGING
 
+    def select_logfile_location():
+        global config
+        selected_plc_name = tab_control.tab(tab_control.select())['text'].lower()
+        log_dir = filedialog.askdirectory()
+        if log_dir:
+            config[selected_plc_name]['logger_folder'] = log_dir
+        print(config[selected_plc_name]['logger_folder'])
+
     def logging_worker(plc_name, log_cadence, batch_tag=None):
         global config
         selected_plc_config = config[plc_name]
@@ -137,7 +145,8 @@ if __name__ == '__main__':
                         tag_read_results = plc.read(*conf2list(selected_plc_config['LOGGER_TAG_LIST']))
                         if batch_tag:
                             # if a batch tag is set, only log data when the batch latch is set
-                            if (tag_read_results[batch_tag]):
+                            res_dict = {tag.tag:tag.value for tag in tag_read_results}
+                            if (res_dict[batch_tag]):
                                 # if the latch isn't set, set it, otherwise keep logging as usual
                                 if not batch_latch:
                                     batch_latch = True
@@ -165,15 +174,17 @@ if __name__ == '__main__':
             raise err
 
 
-    def start_logger(plc_name, log_cadence=6, when='h', interval=1, atTime=None):
+    def start_logger(plc_name, log_cadence=6, when='h', interval=1, atTime=None, batch_tag=None):
         global config
         selected_plc_config = config[plc_name]
+        log_dir = selected_plc_config['logger_folder']
+        print(f'{log_dir}/{plc_name}.log')
         # stop any previously running logger jobs
         stop_logger_thread(plc_name)
         # create a new logger object
         loggers[plc_name] = logging.getLogger(plc_name)
         # we'll use a timed rotating file handler as a default. Hopefully a batch log file doesnt go longer than 4 wks
-        log_handler = HeadyTimedRotatingFileHandler(f'{plc_name}.log', when=when, interval=interval, atTime=atTime)
+        log_handler = HeadyTimedRotatingFileHandler(f'{log_dir}/{plc_name}.log', when=when, interval=interval, atTime=atTime)
         # Set the logger header text
         log_handler.configureHeaderWriter(selected_plc_config['LOGGER_TAG_LIST'], loggers[plc_name])
         # use cutom header formatter
@@ -182,7 +193,7 @@ if __name__ == '__main__':
         loggers[plc_name].addHandler(log_handler)
         loggers[plc_name].setLevel(logging.INFO)
         log_handler.doRollover()
-        thread = threading.Thread(target=logging_worker, args=(plc_name, log_cadence, ), daemon=True)
+        thread = threading.Thread(target=logging_worker, args=(plc_name, log_cadence, batch_tag), daemon=True)
         thread.start()
 
     def stop_logger_thread(plc_name):
@@ -275,31 +286,32 @@ if __name__ == '__main__':
     def rename_config():
         rename_dialog()
 
-    def run_config():
-        # determine the active config name
-        selected_plc_name = tab_control.tab(tab_control.select())['text'].lower()
+    def run_config(plc_name = None):
+        if plc_name is None:
+            # determine the active config name
+            plc_name = tab_control.tab(tab_control.select())['text'].lower()
         # filter by log type, then build the args for the logger rotation
-        lt_option = log_type[selected_plc_name].get()
+        lt_option = log_type[plc_name].get()
         if lt_option == 'HOURLY':
             logger_args = {'when':'h', 'interval':1}
         elif lt_option == 'DAILY':
-            logger_args = {'when':'midnight', 'atTime':dt.time(hour=int(log_state_hours[selected_plc_name].get()))}
+            logger_args = {'when':'midnight', 'atTime':dt.time(hour=int(log_state_hours[plc_name].get()))}
         elif lt_option == 'WEEKLY':
             # figure out which day to rotate on and at what time
             week_map = {'SUNDAY':'W6', 'MONDAY':'W0', 'TUESDAY':'W1', 'WEDNESDAY':'W2', 'THURSDAY':'W3', 'FRIDAY':'W4', 'SATURDAY':'W5'}
-            logger_args = {'when':week_map[log_state_days[selected_plc_name].get()], 'atTime':dt.time(hour=int(log_state_hours[selected_plc_name].get()))}
+            logger_args = {'when':week_map[log_state_days[plc_name].get()], 'atTime':dt.time(hour=int(log_state_hours[plc_name].get()))}
         elif lt_option == 'BATCH':
-            print('UNHANDLED BATCH THINGS')
+            logger_args = {'when':'midnight', 'atTime':dt.time(hour=int(log_state_hours[plc_name].get())), 'batch_tag':log_batch_cbo[plc_name].get()}
         else:
             print('invalid log type!')
             raise Exception('BAD LOG TYPE')
         
         # map how often to record data
         period_map = {'1 SEC':1, '10 SEC':10, '1 MIN':60, '1 HOUR':3600}
-        logger_args['log_cadence'] = period_map[log_period[selected_plc_name].get()]
-        logger_args['plc_name'] = selected_plc_name
+        logger_args['log_cadence'] = period_map[log_period[plc_name].get()]
+        logger_args['plc_name'] = plc_name
 
-        print(f'Running the config for {selected_plc_name}...')
+        print(f'Running the config for {plc_name}...')
         start_logger(**logger_args)
 
     def remove_config():
@@ -595,6 +607,7 @@ if __name__ == '__main__':
     #####################################################################################################################
     # TAB SETUP
     def gen_new_tab(plc_name = 'new_plc'):
+        global config
         new_tab = ttk.Frame(tab_control)
 
         #####################################################################################################################
@@ -651,24 +664,24 @@ if __name__ == '__main__':
         lbl_cadence_type = tk.Label(lf_config, text='Log Type')
         lbl_cadence_type.grid(row=0, column=0, sticky='nw')
         cbo_cadence_type = ttk.Combobox(lf_config, values=('HOURLY', 'DAILY', 'WEEKLY', 'BATCH'), textvariable=log_type[plc_name], state='readonly')
-        cbo_cadence_type.set('HOURLY')
+        cbo_cadence_type.set(config[plc_name].get('log_cadence','HOURLY'))
         cbo_cadence_type.grid(row=0, column=1, sticky='news')
         lbl_rotation_day = tk.Label(lf_config, text='Log Rotate Day')
         lbl_rotation_day.grid(row=1, column=0, sticky='nw')
         cbo_rotation_day = ttk.Combobox(lf_config, values=('SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'), textvariable=log_state_days[plc_name], state='readonly')
-        cbo_rotation_day.set('SUNDAY')
+        cbo_rotation_day.set(config[plc_name].get('log_start_day','SUNDAY'))
         cbo_rotation_day.grid(row=1, column=1, sticky='news')
         lbl_rotation_hour = tk.Label(lf_config, text='Log Rotate Hour')
         lbl_rotation_hour.grid(row=2, column=0, sticky='nw')
         cbo_rotation_hour = ttk.Combobox(lf_config, values=tuple(range(0,24)), textvariable=log_state_hours[plc_name], state='readonly')
-        cbo_rotation_hour.set(14)
+        cbo_rotation_hour.set(config[plc_name].get('log_start_hour',14))
         cbo_rotation_hour.grid(row=2, column=1, sticky='news')
         lbl_batch_tag = tk.Label(lf_config, text='Batch Tag')
         lbl_batch_tag.grid(row=3, column=0, sticky='nw')
         lbl_period = tk.Label(lf_config, text='Log Period')
         lbl_period.grid(row=4, column=0, sticky='nw')
         cbo_period = ttk.Combobox(lf_config, values=('1 SEC', '10 SEC', '1 MIN', '1 HOUR'), textvariable=log_period[plc_name], state='readonly')
-        cbo_period.set('10 SEC')
+        cbo_period.set(config[plc_name].get('logger_period','10 SEC'))
         cbo_period.grid(row=4, column=1, sticky='news')
         log_batch_cbo[plc_name] = ttk.Combobox(lf_config, values=plc_lboxes[plc_name].get(0, plc_lboxes[plc_name].size()), textvariable=log_batch_tag[plc_name], state='readonly')
         log_batch_cbo[plc_name].grid(row=3, column=1, sticky='news')
@@ -732,7 +745,10 @@ if __name__ == '__main__':
 
             log_batch_cbo[section]['values'] = log_list
 
+
             tab_control.insert(idx-1, new_tab, text=f'{section}'.upper())
+            run_config(section)
+
 
         tab_control.select(tab_control.tabs()[0])
 
@@ -753,6 +769,8 @@ if __name__ == '__main__':
     # File Menu
     menu_file.add_command(label='Query PLC Tag List', command=query_plc_tags)
     menu_file.add_command(label='Stop All Loggers', command=stop_all_logger_threads)
+    menu_file.add_separator()
+    menu_file.add_command(label='Log File Location', command=select_logfile_location)
     menu_file.add_separator()
     menu_file.add_command(label='Close', command=window.destroy)
 
