@@ -69,6 +69,26 @@ class HeadyTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
         self._header = header
         self._log = log
 
+
+class HeadyRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    def __init__(self, logfile, maxBytes, backupCount):
+        super(HeadyRotatingFileHandler, self).__init__(logfile, maxBytes=maxBytes, backupCount=backupCount)
+        self._header = ""
+        self._log = None
+
+    def doRollover(self):
+        super(HeadyRotatingFileHandler, self).doRollover()
+        if self._log is not None and self._header != "":
+            self._log.info(self._header)
+
+    def setHeader(self, header):
+        self._header = header
+
+    def configureHeaderWriter(self, header, log):
+        self._header = header
+        self._log = log
+
+
 #####################################################################################################################
 # INPUT SANITATION
 
@@ -183,8 +203,11 @@ if __name__ == '__main__':
         stop_logger_thread(plc_name)
         # create a new logger object
         loggers[plc_name] = logging.getLogger(plc_name)
-        # we'll use a timed rotating file handler as a default. Hopefully a batch log file doesnt go longer than 4 wks
-        log_handler = HeadyTimedRotatingFileHandler(f'{log_dir}/{plc_name}.log', when=when, interval=interval, atTime=atTime)
+        if batch_tag:
+            log_handler = HeadyRotatingFileHandler(f'{log_dir}/{plc_name}.log', maxBytes=50*1000*1000, backupCount=3)
+        else:
+            # we'll use a timed rotating file handler as a default
+            log_handler = HeadyTimedRotatingFileHandler(f'{log_dir}/{plc_name}.log', when=when, interval=interval, atTime=atTime)
         # Set the logger header text
         log_handler.configureHeaderWriter(selected_plc_config['LOGGER_TAG_LIST'], loggers[plc_name])
         # use cutom header formatter
