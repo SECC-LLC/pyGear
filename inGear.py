@@ -203,8 +203,9 @@ if __name__ == '__main__':
         stop_logger_thread(plc_name)
         # create a new logger object
         loggers[plc_name] = logging.getLogger(plc_name)
+        timestamp = round(dt.datetime.utcnow().timestamp())
         if batch_tag:
-            log_handler = HeadyRotatingFileHandler(f'{log_dir}/{plc_name}.log', maxBytes=50*1000*1000, backupCount=3)
+            log_handler = HeadyRotatingFileHandler(f'{log_dir}/{plc_name}.{timestamp}.log', maxBytes=50*1000*1000, backupCount=3)
         else:
             # we'll use a timed rotating file handler as a default
             log_handler = HeadyTimedRotatingFileHandler(f'{log_dir}/{plc_name}.log', when=when, interval=interval, atTime=atTime)
